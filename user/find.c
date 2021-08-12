@@ -21,12 +21,12 @@ void find(char *path, char* filename){
   struct stat st;
 
   if((fd = open(path, 0)) < 0){
-    printf("cannot open %s\r\n", path);
+    printf("cannot open %s\n", path);
     return;
   }
 
   if(fstat(fd, &st) < 0){
-    printf("cannot stat %s\r\n", path);
+    printf("cannot stat %s\n", path);
     close(fd);
     return;
   }
@@ -34,7 +34,7 @@ void find(char *path, char* filename){
   switch (st.type) {
   case T_FILE:
     if(strcmp(filename, fmtname(path)) == 0){
-        printf("%s\r\n", path);
+        printf("%s\n", path);
     }
     break;
   case T_DIR:
@@ -68,7 +68,7 @@ void find(char *path, char* filename){
 int main(int argc, char *argv[]) {
 
   if (argc != 3) {
-    printf("argc error: %d\r\n", argc);
+    printf("argc error: %d\n", argc);
     exit(1);
   }
 
