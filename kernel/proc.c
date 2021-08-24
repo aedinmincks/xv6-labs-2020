@@ -121,7 +121,7 @@ found:
     return 0;
   }
 
-  p->kernel_pagetable = kvminit0();
+  p->kernel_pagetable = proc_kpt_init();
   if(p->kernel_pagetable == 0){
     freeproc(p);
     release(&p->lock);
@@ -153,8 +153,18 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  if (p->kstack)
+  {
+    pte_t* pte = walk(p->kernel_pagetable, p->kstack, 0);
+    if (pte == 0)
+      panic("freeproc: kstack");
+    kfree((void*)PTE2PA(*pte));
+  }
+  p->kstack = 0;
+
   if(p->kernel_pagetable)
-    proc_free_kernel_pagetable(p->kernel_pagetable, PGSIZE, p->kstack);
+    proc_freekpt(p->kernel_pagetable);
   p->kernel_pagetable = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
@@ -202,20 +212,24 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
-extern char etext[];  // kernel.ld sets this to end of kernel code.
-
 void
-proc_free_kernel_pagetable(pagetable_t pagetable, uint64 sz, uint64 kstack)
+proc_freekpt(pagetable_t pagetable)
 {
-  uvmunmap(pagetable, UART0, 1, 0);
-  uvmunmap(pagetable, VIRTIO0, 1, 0);
-  uvmunmap(pagetable, CLINT, 0x10000/PGSIZE, 0);
-  uvmunmap(pagetable, PLIC, 0x400000/PGSIZE, 0);
-  uvmunmap(pagetable, KERNBASE, ((uint64)etext-KERNBASE)/PGSIZE, 0);
-  uvmunmap(pagetable, (uint64)etext, (PHYSTOP-(uint64)etext)/PGSIZE, 0);
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-
-  uvmfree2(pagetable, kstack, sz);
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V)){
+      pagetable[i] = 0;
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0)
+      {
+        uint64 child = PTE2PA(pte);
+        proc_freekpt((pagetable_t)child);
+      }
+    } else if(pte & PTE_V){
+      panic("proc free kpt: leaf");
+    }
+  }
+  kfree((void*)pagetable);
 }
 
 // Free a process's page table, and free the
@@ -254,6 +268,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  u2kvmcopy(p->pagetable, p->kernel_pagetable, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -276,9 +292,13 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if(PGROUNDUP(sz + n) >= PLIC){
+      return -1;
+    }
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    u2kvmcopy(p->pagetable, p->kernel_pagetable, sz - n, sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -321,6 +341,8 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  u2kvmcopy(np->pagetable, np->kernel_pagetable, 0, np->sz);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -479,6 +501,8 @@ wait(uint64 addr)
   }
 }
 
+extern pagetable_t kernel_pagetable;
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -512,8 +536,6 @@ scheduler(void)
 
         swtch(&c->context, &p->context);
 
-        kvminithart();
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
@@ -525,6 +547,8 @@ scheduler(void)
 #if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
+      w_satp(MAKE_SATP(kernel_pagetable));
+      sfence_vma();
       asm volatile("wfi");
     }
 #else
