@@ -694,3 +694,32 @@ procdump(void)
     printf("\n");
   }
 }
+
+int
+lazy_alloc(uint64 addr)
+{
+  struct proc* p = myproc();
+  
+  if(addr > p->sz){
+    return -1;
+  }
+  
+  if(addr < p->trapframe->sp){
+    return -2;
+  }
+
+  uint64 pa = PGROUNDDOWN(addr);
+  char *mem = kalloc();
+
+  if(mem == 0){
+    return -3;
+  }
+
+  memset(mem, 0, PGSIZE);
+  if(mappages(p->pagetable, pa, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+    kfree(mem);
+    return -4;
+  }
+
+  return 0;
+} 
