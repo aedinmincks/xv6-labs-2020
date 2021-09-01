@@ -700,7 +700,7 @@ lazy_alloc(uint64 addr)
 {
   struct proc* p = myproc();
   
-  if(addr > p->sz){
+  if(addr >= p->sz){
     return -1;
   }
   
