@@ -1,0 +1,5 @@
+Q&A
+1.Why are there missing keys with 2 threads, but not with 1 thread? Identify a sequence of events with 2 threads that can lead to a key being missing. 
+
+	when thread0 will insert the key , at this moment, thread1 insert a another key at the same place, then thread0 continue operate, the thread1's key is missing.
+   
