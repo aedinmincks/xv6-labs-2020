@@ -21,7 +21,6 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -274,6 +273,15 @@ fork(void)
     return -1;
   }
 
+  for(int i = 0; i < MAXVMA; i++){
+    struct vma *v = &p->vma[i];
+    struct vma *nv = &np->vma[i];
+    if(v->used){
+      memmove(nv, v, sizeof(struct vma));
+      filedup(nv->f);
+    }
+  }
+
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -350,6 +358,14 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for(int i = 0; i < MAXVMA; i++){
+    struct vma *v = &p->vma[i];
+    if(v->used){
+      uvmunmap(p->pagetable, v->addr, v->len / PGSIZE, 0);
+      memset(v, 0, sizeof(struct vma));
     }
   }
 

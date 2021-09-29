@@ -484,3 +484,122 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 sys_mmap(void) {
+  uint64 addr;
+  int length, prot, flags, fd, offset;
+  struct file *f;
+
+  if (argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 ||
+      argint(3, &flags) < 0 || argfd(4, &fd, &f) < 0 ||
+      argint(5, &offset) < 0) {
+    return -1;
+  }
+
+  if (!f->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED)) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+
+  for(uint i = 0; i < MAXVMA; i++){
+    struct vma* v = &p->vma[i];
+    if(!v->used){
+      v->used = 1;
+      v->addr = p->sz;
+      v->len = PGROUNDUP(length);
+      p->sz += v->len;
+      v->prot = prot;
+      v->flags = flags;
+      v->f = filedup(f);
+      v->start_point = 0;
+      return v->addr;
+    }
+  }
+
+  return -1;
+}
+
+int 
+file_write_new(struct file *f, uint64 addr,int n ,uint off)
+{
+  int r = 0;
+  if(f->writable == 0){
+    return -1;
+  }
+
+  int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+  int i = 0;
+  while(i < n){
+      int n1 = n - i;
+      if(n1 > max)
+        n1 = max;
+
+      begin_op();
+      ilock(f->ip);
+      if ((r = writei(f->ip, 1, addr + i, off, n1)) > 0)
+        off += r;
+      iunlock(f->ip);
+      end_op();
+
+      if(r != n1){
+        break;
+      }
+
+      i += r;
+    }
+
+    return 0;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int len;
+  int close = 0;
+
+  if (argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
+    return -1;
+  }
+
+  struct proc* p = myproc();
+
+  for(uint i = 0; i < MAXVMA; i++){
+    struct vma* v = &p->vma[i];
+    if(v->used && addr >=  v->addr && addr <= v->addr + v->len){
+      uint64 npages = 0;
+      uint off = v->start_point;
+      if(addr == v->addr){
+        if(len >= v->len){
+          len = v->len;
+          v->used = 0;
+          close = 1;
+        }
+        else{
+          v->addr += len;
+          v->start_point = len;
+        }
+      }
+
+      len = PGROUNDUP(len);
+      npages = len/PGSIZE;
+      v->len -= len;
+      p->sz -= len;
+
+      if(v->flags & MAP_SHARED){
+        file_write_new(v->f, addr, len, off);
+      }
+
+      uvmunmap(p->pagetable, PGROUNDDOWN(addr), npages, 0);
+
+      if(close){
+        fileclose(v->f);
+      }
+
+      return 0;
+    }
+  }
+
+  return -1;
+}
