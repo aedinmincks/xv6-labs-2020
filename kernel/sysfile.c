@@ -567,7 +567,7 @@ sys_munmap(void)
 
   for(uint i = 0; i < MAXVMA; i++){
     struct vma* v = &p->vma[i];
-    if(v->used && addr >=  v->addr && addr <= v->addr + v->len){
+    if(v->used && addr >=  v->addr && addr < v->addr + v->len){
       uint64 npages = 0;
       uint off = v->start_point;
       if(addr == v->addr){
